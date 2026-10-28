@@ -1,4 +1,4 @@
-name: Danger Swift Linux installer diagnosis
+name: Danger Swift Linux runtime diagnosis
 on:
   push:
     branches: [verify-danger-swift-installation]
@@ -9,29 +9,54 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 25
     steps:
-      - name: Inspect official installer on native Swift
+      - name: Test actual and isolated home directories on native Swift
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/danger-diagnostic"
           set -o pipefail
-          docker run --rm -v "$RUNNER_TEMP/danger-diagnostic:/work" -w /work swift:6.4.1-resolute bash -c '
-            set -eu
-            cat /etc/os-release
-            swift --version
-            git clone --depth 1 --branch 3.22.1 https://github.com/danger/swift.git danger
-            cd danger
-            PREFIX=/work/install bash Scripts/install.sh
-            echo "=== installed files ==="
-            find /work/install -maxdepth 4 -type f -print
-            echo "=== build links ==="
-            ls -la .build
-            echo "=== build module and library locations ==="
-            find .build -maxdepth 6 \( -name "*.swiftmodule" -o -name "libDanger.so" -o -name "Modules" -o -name "danger-swift" \) -print
-            echo "=== manifest declaration ==="
-            grep "library(name:.*Danger" Package.swift
-          ' 2>&1 | tee "$RUNNER_TEMP/danger-diagnostic/diagnostic.log"
+          docker run --rm -i -v "$RUNNER_TEMP/danger-diagnostic:/work" -w /work swift:6.4.1-resolute bash -s <<'SH' 2>&1 | tee "$RUNNER_TEMP/danger-diagnostic/runtime.log"
+          set -eu
+          swift --version
+          apt-get update -qq
+          apt-get install -y -qq nodejs npm >/dev/null
+          npm install --prefix /work/js danger@13.0.10
+          export PATH="/work/js/node_modules/.bin:$PATH"
+          git clone --depth 1 --branch 3.22.1 https://github.com/danger/swift.git danger
+          cd danger
+          PREFIX=/work/install bash Scripts/install.sh
+          /work/install/bin/danger-swift --version
+          for home_dir in /root /work/isolated-home; do
+            prefix="$home_dir/.local/share/mise/installs/danger-swift/3.22.1"
+            mkdir -p "$prefix"
+            cp -a /work/install/. "$prefix/"
+          done
+          mkdir /work/fixture
+          cd /work/fixture
+          cat >Dangerfile.swift <<'SWIFT'
+          import Danger
+          import Foundation
+          nonisolated(unsafe) let danger = Danger()
+          danger.fail("mise Danger Swift integration test")
+          SWIFT
+          git init -q -b master
+          git config user.email e2e@example.com
+          git config user.name 'mise e2e'
+          git add Dangerfile.swift
+          git commit -qm initial
+          git checkout -qb test
+          cp Dangerfile.swift Changed.swift
+          git add Changed.swift
+          git commit -qm change
+          for home_dir in /root /work/isolated-home; do
+            echo "=== HOME=$home_dir ==="
+            env HOME="$home_dir" swift -e 'import Foundation; print("Foundation home:", NSHomeDirectory())'
+            result=0
+            env HOME="$home_dir" "$home_dir/.local/share/mise/installs/danger-swift/3.22.1/bin/danger-swift" local --danger-js-path /work/js/node_modules/.bin/danger 2>&1 || result=$?
+            echo "=== Danger exit: $result ==="
+          done
+          SH
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()
         with:
-          name: danger-linux-installer-diagnostic
-          path: ${{ runner.temp }}/danger-diagnostic/diagnostic.log
+          name: danger-linux-runtime-diagnostic
+          path: ${{ runner.temp }}/danger-diagnostic/runtime.log
