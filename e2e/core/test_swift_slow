@@ -17,14 +17,14 @@ assert "mise x spm:nicklockwood/SwiftFormat@0.61.1 -- swiftformat --version" "0.
 # the compatible library as libxml2.so.16. Keep SwiftPM mandatory by providing
 # the expected SONAME in the isolated test environment.
 if [[ $(uname -s) == Linux ]]; then
-  libxml2_path="$(find /usr/lib /lib -name 'libxml2.so.2' -print -quit 2>/dev/null)"
-  if [[ -z $libxml2_path ]]; then
-    libxml2_path="$(find /usr/lib /lib -name 'libxml2.so.16' -print -quit 2>/dev/null)"
-    [[ -n $libxml2_path ]]
-    mkdir -p swift-compat
-    ln -s "$libxml2_path" swift-compat/libxml2.so.2
-    export LD_LIBRARY_PATH="$PWD/swift-compat${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-  fi
+	libxml2_path="$(find /usr/lib /lib -name 'libxml2.so.2' -print -quit 2>/dev/null)"
+	if [[ -z $libxml2_path ]]; then
+		libxml2_path="$(find /usr/lib /lib -name 'libxml2.so.16' -print -quit 2>/dev/null)"
+		[[ -n $libxml2_path ]]
+		mkdir -p swift-compat
+		ln -s "$libxml2_path" swift-compat/libxml2.so.2
+		export LD_LIBRARY_PATH="$PWD/swift-compat${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+	fi
 fi
 assert_matches "mise x -- swift package --version" 'Swift Package Manager - Swift 6\.'
 
@@ -52,17 +52,17 @@ git -C spm-revision add .
 git -C spm-revision commit -qm "second"
 git_config="$PWD/spm-gitconfig"
 git config --file "$git_config" \
-  url."file://$PWD/spm-revision".insteadOf \
-  "https://github.com/mise-test/spm-revision.git"
+	url."file://$PWD/spm-revision".insteadOf \
+	"https://github.com/mise-test/spm-revision.git"
 
 assert \
-  "GIT_CONFIG_GLOBAL=$git_config MISE_GIX=0 mise x spm:mise-test/spm-revision@rev:$first_revision -- revision-tool" \
-  "first commit"
+	"GIT_CONFIG_GLOBAL=$git_config MISE_GIX=0 mise x spm:mise-test/spm-revision@rev:$first_revision -- revision-tool" \
+	"first commit"
 assert \
-  "GIT_CONFIG_GLOBAL=$git_config MISE_GIX=0 mise x spm:mise-test/spm-revision@ref:$short_revision -- revision-tool" \
-  "first commit"
+	"GIT_CONFIG_GLOBAL=$git_config MISE_GIX=0 mise x spm:mise-test/spm-revision@ref:$short_revision -- revision-tool" \
+	"first commit"
 assert_fail \
-  "GIT_CONFIG_GLOBAL=$git_config MISE_GIX=0 mise install spm:mise-test/spm-revision@rev:deadbeef"
+	"GIT_CONFIG_GLOBAL=$git_config MISE_GIX=0 mise install spm:mise-test/spm-revision@rev:deadbeef"
 assert_fail "mise where spm:mise-test/spm-revision@rev:deadbeef"
 
 # test package with resources (`templates list` command depends on resources being installed)
