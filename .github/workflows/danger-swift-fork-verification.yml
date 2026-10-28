@@ -1,70 +1,89 @@
-name: Danger Swift Linux runtime diagnosis
+name: Danger Swift fork verification
+
 on:
   push:
     branches: [verify-danger-swift-installation]
+
 permissions:
   contents: read
+
 jobs:
-  diagnose:
-    runs-on: ubuntu-26.04
-    timeout-minutes: 25
+  danger:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-26.04, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 100
+    env:
+      MBX_DISABLE: "1"
+      CARGO_BUILD_JOBS: "2"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_INCREMENTAL: "0"
+      MISE_TRUSTED_CONFIG_PATHS: ${{ github.workspace }}
+      MISE_GITHUB_TOKEN: ${{ github.token }}
+      GITHUB_TOKEN: ${{ github.token }}
     steps:
-      - name: Test actual and isolated home directories on native Swift
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Linux build and test prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          cat /etc/os-release
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libssl-dev clang libclang-dev zsh fish jq gnupg libcurl4-openssl-dev libxml2-dev libicu-dev libsqlite3-dev libedit-dev libncurses-dev libz-dev
+      - name: macOS build and test prerequisites
+        if: runner.os == 'macOS'
+        run: |
+          brew install coreutils openssl@3 pkg-config gnupg
+          echo "$(brew --prefix coreutils)/libexec/gnubin" >> "$GITHUB_PATH"
+          echo "OPENSSL_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
+          xcrun swift --version
+      - name: Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          shared-key: danger-swift-${{ matrix.os }}
+          cache-on-failure: true
+      - name: Build proposed mise
+        run: |
+          cargo build --all-features
+          echo "$PWD/target/debug" >> "$GITHUB_PATH"
+          target/debug/mise --version
+      - name: Run proposed Swift E2E unchanged
         shell: bash
         run: |
-          mkdir -p "$RUNNER_TEMP/danger-diagnostic"
           set -o pipefail
-          docker run --rm -i -v "$RUNNER_TEMP/danger-diagnostic:/work" -w /work swift:6.4.1-resolute bash -s <<'SH' 2>&1 | tee "$RUNNER_TEMP/danger-diagnostic/runtime.log"
-          set -eu
-          swift --version
-          apt-get update -qq
-          apt-get install -y -qq nodejs npm >/dev/null
-          npm install --prefix /work/js danger@13.0.10
-          export PATH="/work/js/node_modules/.bin:$PATH"
-          git clone --depth 1 --branch 3.22.1 https://github.com/danger/swift.git danger
-          cd danger
-          PREFIX=/work/install bash Scripts/install.sh
-          /work/install/bin/danger-swift --version
-          for home_dir in /root /work/isolated-home; do
-            prefix="$home_dir/.local/share/mise/installs/danger-swift/3.22.1"
-            mkdir -p "$prefix"
-            cp -a /work/install/. "$prefix/"
-          done
-          mkdir /work/fixture
-          cd /work/fixture
-          cat >Dangerfile.swift <<'SWIFT'
-          import Danger
-          import Foundation
-          nonisolated(unsafe) let danger = Danger()
-          danger.fail("mise Danger Swift integration test")
-          SWIFT
-          git init -q -b master
-          git config user.email e2e@example.com
-          git config user.name 'mise e2e'
-          git add Dangerfile.swift
-          git commit -qm initial
-          git checkout -qb test
-          cp Dangerfile.swift Changed.swift
-          git add Changed.swift
-          git commit -qm change
-          for home_dir in /root /work/isolated-home; do
-            echo "=== HOME=$home_dir ==="
-            if [[ "$home_dir" != /root ]]; then
-              mv /root/.local/share/mise/installs/danger-swift/3.22.1 /work/saved-root-install
-            fi
-            env HOME="$home_dir" swift -e 'import Foundation; print("Foundation home:", NSHomeDirectory())'
-            result=0
-            env HOME="$home_dir" "$home_dir/.local/share/mise/installs/danger-swift/3.22.1/bin/danger-swift" local --danger-js-path /work/js/node_modules/.bin/danger 2>&1 || result=$?
-            echo "=== Danger exit: $result ==="
-          done
-          echo "=== isolated HOME with CFFIXED_USER_HOME ==="
-          env HOME=/work/isolated-home CFFIXED_USER_HOME=/work/isolated-home swift -e 'import Foundation; print("Foundation home:", NSHomeDirectory())'
-          result=0
-          env HOME=/work/isolated-home CFFIXED_USER_HOME=/work/isolated-home /work/isolated-home/.local/share/mise/installs/danger-swift/3.22.1/bin/danger-swift local --danger-js-path /work/js/node_modules/.bin/danger 2>&1 || result=$?
-          echo "=== Danger fixed-home exit: $result ==="
-          SH
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+          target/debug/mise run --skip-deps --skip-tools test:e2e e2e/core/test_swift_slow 2>&1 | tee "$RUNNER_TEMP/danger-original-e2e.log"
+      - name: Prepare native Ubuntu test without libxml shim
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          source = Path('e2e/core/test_swift_slow').read_text()
+          start = source.index("# Swift's Ubuntu 24.04 binaries require")
+          end = source.index('assert_matches "mise x -- swift package --version"', start)
+          source = source[:start] + source[end:]
+          source = source.replace('mise use swift@6\n', 'mise use swift@6.4.1\n', 1)
+          assert 'swift-compat' not in source
+          assert 'ln -s' not in source
+          assert 'mise use swift@6.4.1' in source
+          Path('e2e/core/test_swift_native_slow').write_text(source)
+          PY
+      - name: Run native Ubuntu Swift E2E without libxml shim
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -o pipefail
+          target/debug/mise run --skip-deps --skip-tools test:e2e e2e/core/test_swift_native_slow 2>&1 | tee "$RUNNER_TEMP/danger-native-e2e.log"
+      - name: Save test logs
         if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: danger-linux-runtime-diagnostic
-          path: ${{ runner.temp }}/danger-diagnostic/runtime.log
+          name: danger-swift-${{ matrix.os }}
+          path: ${{ runner.temp }}/danger-*-e2e.log
+          if-no-files-found: ignore
