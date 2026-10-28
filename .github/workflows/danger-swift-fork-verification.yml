@@ -20,7 +20,7 @@ jobs:
             swift --version
             git clone --depth 1 --branch 3.22.1 https://github.com/danger/swift.git danger
             cd danger
-            make install PREFIX=/work/install
+            PREFIX=/work/install bash Scripts/install.sh
             echo "=== installed files ==="
             find /work/install -maxdepth 4 -type f -print
             echo "=== build links ==="
