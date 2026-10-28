@@ -106,9 +106,8 @@ cp Dangerfile.swift Changed.swift
 git add Changed.swift
 git commit -q -m change
 
-if [[ $(uname -s) == Darwin ]]; then
-	export CFFIXED_USER_HOME="$HOME"
-fi
+# Foundation must use the isolated test home on Linux as well as macOS.
+export CFFIXED_USER_HOME="$HOME"
 
 danger_output="$(
 	mise x node@24 danger-swift@3.22.1 npm:danger@13.0.10 -- danger-swift local 2>&1
