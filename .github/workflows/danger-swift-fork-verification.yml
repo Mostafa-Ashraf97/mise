@@ -49,11 +49,19 @@ jobs:
           git commit -qm change
           for home_dir in /root /work/isolated-home; do
             echo "=== HOME=$home_dir ==="
+            if [[ "$home_dir" != /root ]]; then
+              mv /root/.local/share/mise/installs/danger-swift/3.22.1 /work/saved-root-install
+            fi
             env HOME="$home_dir" swift -e 'import Foundation; print("Foundation home:", NSHomeDirectory())'
             result=0
             env HOME="$home_dir" "$home_dir/.local/share/mise/installs/danger-swift/3.22.1/bin/danger-swift" local --danger-js-path /work/js/node_modules/.bin/danger 2>&1 || result=$?
             echo "=== Danger exit: $result ==="
           done
+          echo "=== isolated HOME with CFFIXED_USER_HOME ==="
+          env HOME=/work/isolated-home CFFIXED_USER_HOME=/work/isolated-home swift -e 'import Foundation; print("Foundation home:", NSHomeDirectory())'
+          result=0
+          env HOME=/work/isolated-home CFFIXED_USER_HOME=/work/isolated-home /work/isolated-home/.local/share/mise/installs/danger-swift/3.22.1/bin/danger-swift local --danger-js-path /work/js/node_modules/.bin/danger 2>&1 || result=$?
+          echo "=== Danger fixed-home exit: $result ==="
           SH
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()
