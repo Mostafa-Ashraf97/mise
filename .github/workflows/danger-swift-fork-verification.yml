@@ -1,88 +1,37 @@
-name: Danger Swift fork verification
-
+name: Danger Swift Linux installer diagnosis
 on:
   push:
     branches: [verify-danger-swift-installation]
-
 permissions:
   contents: read
-
 jobs:
-  danger:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-26.04, macos-latest]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 100
-    env:
-      MBX_DISABLE: "1"
-      CARGO_BUILD_JOBS: "2"
-      CARGO_PROFILE_DEV_DEBUG: "0"
-      CARGO_INCREMENTAL: "0"
-      MISE_TRUSTED_CONFIG_PATHS: ${{ github.workspace }}
-      MISE_GITHUB_TOKEN: ${{ github.token }}
-      GITHUB_TOKEN: ${{ github.token }}
+  diagnose:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 25
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          persist-credentials: false
-      - name: Linux build and test prerequisites
-        if: runner.os == 'Linux'
-        run: |
-          cat /etc/os-release
-          sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config libssl-dev clang libclang-dev zsh fish jq gnupg libcurl4-openssl-dev libxml2-dev libicu-dev libsqlite3-dev libedit-dev libncurses-dev libz-dev
-      - name: macOS build and test prerequisites
-        if: runner.os == 'macOS'
-        run: |
-          brew install coreutils openssl@3 pkg-config gnupg
-          echo "$(brew --prefix coreutils)/libexec/gnubin" >> "$GITHUB_PATH"
-          echo "OPENSSL_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
-          xcrun swift --version
-      - name: Rust toolchain
-        run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
-        with:
-          shared-key: danger-swift-${{ matrix.os }}
-      - name: Build proposed mise
-        run: |
-          cargo build --all-features
-          echo "$PWD/target/debug" >> "$GITHUB_PATH"
-          target/debug/mise --version
-      - name: Run proposed Swift E2E unchanged
+      - name: Inspect official installer on native Swift
         shell: bash
         run: |
+          mkdir -p "$RUNNER_TEMP/danger-diagnostic"
           set -o pipefail
-          target/debug/mise run --skip-deps --skip-tools test:e2e e2e/core/test_swift_slow 2>&1 | tee "$RUNNER_TEMP/danger-original-e2e.log"
-      - name: Prepare native Ubuntu test without libxml shim
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          source = Path('e2e/core/test_swift_slow').read_text()
-          start = source.index("# Swift's Ubuntu 24.04 binaries require")
-          end = source.index('assert_matches "mise x -- swift package --version"', start)
-          source = source[:start] + source[end:]
-          source = source.replace('mise use swift@6\n', 'mise use swift@6.4.1\n', 1)
-          assert 'swift-compat' not in source
-          assert 'ln -s' not in source
-          assert 'mise use swift@6.4.1' in source
-          Path('e2e/core/test_swift_native_slow').write_text(source)
-          PY
-      - name: Run native Ubuntu Swift E2E without libxml shim
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          set -o pipefail
-          target/debug/mise run --skip-deps --skip-tools test:e2e e2e/core/test_swift_native_slow 2>&1 | tee "$RUNNER_TEMP/danger-native-e2e.log"
-      - name: Save test logs
+          docker run --rm -v "$RUNNER_TEMP/danger-diagnostic:/work" -w /work swift:6.4.1-resolute bash -c '
+            set -eu
+            cat /etc/os-release
+            swift --version
+            git clone --depth 1 --branch 3.22.1 https://github.com/danger/swift.git danger
+            cd danger
+            make install PREFIX=/work/install
+            echo "=== installed files ==="
+            find /work/install -maxdepth 4 -type f -print
+            echo "=== build links ==="
+            ls -la .build
+            echo "=== build module and library locations ==="
+            find .build -maxdepth 6 \( -name "*.swiftmodule" -o -name "libDanger.so" -o -name "Modules" -o -name "danger-swift" \) -print
+            echo "=== manifest declaration ==="
+            grep "library(name:.*Danger" Package.swift
+          ' 2>&1 | tee "$RUNNER_TEMP/danger-diagnostic/diagnostic.log"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: danger-swift-${{ matrix.os }}
-          path: ${{ runner.temp }}/danger-*-e2e.log
-          if-no-files-found: ignore
+          name: danger-linux-installer-diagnostic
+          path: ${{ runner.temp }}/danger-diagnostic/diagnostic.log
