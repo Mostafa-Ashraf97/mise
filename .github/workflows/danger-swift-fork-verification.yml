@@ -81,9 +81,6 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           source = Path('e2e/core/test_swift_slow').read_text()
-          start = source.index("# Swift's Ubuntu 24.04 binaries require")
-          end = source.index('assert_matches "mise x -- swift package --version"', start)
-          source = source[:start] + source[end:]
           source = source.replace('mise use swift@6\n', 'mise use swift@6.4.1\n', 1)
           assert 'swift-compat' not in source
           assert 'ln -s' not in source
