@@ -53,6 +53,22 @@ jobs:
           cargo build --all-features
           echo "$PWD/target/debug" >> "$GITHUB_PATH"
           target/debug/mise --version
+      - name: Check changed files with upstream linters
+        if: runner.os == 'Linux'
+        working-directory: ${{ runner.temp }}
+        shell: bash
+        run: |
+          "$GITHUB_WORKSPACE/target/debug/mise" x node@24 npm:markdownlint-cli@latest npm:oxfmt@0.73.0 shfmt@3.14.1 shellcheck@0.11.0 taplo@0.10.0 -- bash -euo pipefail -c '
+            cd "$GITHUB_WORKSPACE"
+            shfmt -d -s e2e/core/test_swift_slow
+            shellcheck -x e2e/core/test_swift_slow
+            taplo fmt --check registry/danger-swift.toml
+            taplo check registry/danger-swift.toml
+            markdownlint docs/dev-tools/backends/spm.md
+            oxfmt --check --no-error-on-unmatched-pattern docs/dev-tools/backends/spm.md
+            node docs/.vitepress/llms.ts
+            git diff --exit-code -- docs/public/llms.txt
+          '
       - name: Run proposed Swift E2E unchanged
         shell: bash
         run: |
