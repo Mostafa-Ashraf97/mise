@@ -1846,6 +1846,20 @@
           "type": "string",
           "description": "path to a custom compiled version"
         },
+        "runtime_dependencies": {
+          "description": "tools to install and activate with this tool, as tool@version requests",
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
         "prefix": {
           "type": "string",
           "description": "version prefix to resolve"

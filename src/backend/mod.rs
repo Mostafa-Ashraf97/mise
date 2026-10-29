@@ -3324,6 +3324,9 @@ pub trait Backend: Debug + Send + Sync {
             deps.extend(self.get_optional_dependencies()?);
         }
         let mut deps: IndexSet<_> = deps.into_iter().map(BackendArg::from).collect();
+        for dependency in crate::toolset::runtime_dependencies::declarations(opts)? {
+            deps.insert((*dependency.ba).clone());
+        }
         deps.retain(|ba| &**self.ba() != ba);
         deps.retain(|ba| !all_fulls.contains(&ba.full()));
         Ok(deps)

@@ -111,6 +111,7 @@ impl ToolsetBuilder {
         self.load_config_files(config, &mut toolset)?;
         self.load_runtime_env(&mut toolset, env::vars_safe().collect())?;
         self.load_runtime_args(&mut toolset)?;
+        toolset.add_runtime_dependencies()?;
         Ok(toolset)
     }
 
@@ -128,6 +129,7 @@ impl ToolsetBuilder {
         measure!("toolset_builder::build::load_runtime_args", {
             self.load_runtime_args(&mut toolset)?;
         });
+        toolset.add_runtime_dependencies()?;
         measure!("toolset_builder::build::resolve", {
             let result = toolset
                 .resolve_with_progress(config, &self.resolve_options, self.resolution_progress)

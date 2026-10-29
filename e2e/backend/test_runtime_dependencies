@@ -1,0 +1,184 @@
+#!/usr/bin/env bash
+
+# A fresh three-tool chain must install in dependency order and work at runtime.
+plugin="$MISE_DATA_DIR/plugins/asdf-runtime-parent"
+mkdir -p "$plugin/bin"
+ln -s "$ROOT/test/data/plugins/dummy" "$MISE_DATA_DIR/plugins/asdf-dummy"
+cat >"$plugin/bin/list-all" <<'EOF'
+#!/usr/bin/env bash
+echo 1.0.0
+EOF
+cat >"$plugin/bin/install" <<'EOF'
+#!/usr/bin/env bash
+set -eu
+needs-dummy >/dev/null
+mkdir -p "$ASDF_INSTALL_PATH/bin"
+cat >"$ASDF_INSTALL_PATH/bin/runtime-parent" <<'SCRIPT'
+#!/usr/bin/env bash
+set -eu
+needs-dummy
+dummy
+SCRIPT
+chmod +x "$ASDF_INSTALL_PATH/bin/runtime-parent"
+EOF
+chmod +x "$plugin/bin/"*
+
+cat >mise.toml <<'EOF'
+[tools]
+"asdf:runtime-parent" = { version = "1.0.0", runtime_dependencies = ["needs-dummy[runtime_dependencies='dummy@2.0.0']@1.0.0"] }
+EOF
+cp mise.toml expected.toml
+assert "MISE_JOBS=4 mise install"
+assert "cmp mise.toml expected.toml"
+assert_contains "mise exec -- runtime-parent" "This is Dummy 2.0.0!"
+assert_contains "mise exec -- runtime-parent" "needs-dummy v1.0.0"
+assert_not_contains "mise prune --dry-run" "dummy@2.0.0 is prunable"
+
+# Matching installs are reused; a different installed version is kept separately.
+dependency_path="$(mise where dummy@2.0.0)"
+touch "$dependency_path/reused-marker"
+assert "mise install dummy@1.0.0"
+assert "mise install"
+test -f "$dependency_path/reused-marker"
+assert_contains "mise exec -- dummy" "This is Dummy 2.0.0!"
+assert_contains "mise ls --installed dummy" "1.0.0"
+
+# Removing an inferred dependency must be repaired even if the parent is installed.
+rm -rf "$MISE_DATA_DIR/installs/dummy"
+assert "mise install"
+assert_contains "mise exec -- runtime-parent" "This is Dummy 2.0.0!"
+
+# Explicit versions override defaults (including an explicit backend spelling).
+cat >>mise.toml <<'EOF'
+"asdf:dummy" = "1.0.0"
+EOF
+assert "mise install"
+assert_contains "mise exec -- runtime-parent" "This is Dummy 1.0.0!"
+
+# Installing only the parent still uses the dependency selected in config.
+override_path="$(mise where asdf:dummy)"
+rm -rf "$override_path"
+assert "mise install asdf:runtime-parent"
+assert_contains "mise exec -- runtime-parent" "This is Dummy 1.0.0!"
+
+# Direct CLI installs/use also infer dependencies, without adding their entries.
+printf '' >mise.toml
+rm -rf "$MISE_DATA_DIR/installs/needs-dummy" "$MISE_DATA_DIR/installs/dummy"
+assert "mise use 'needs-dummy[runtime_dependencies=dummy@2.0.0]@1.0.0'"
+assert_fail "grep -E '^dummy[ =]' mise.toml"
+assert_contains "mise exec -- dummy" "This is Dummy 2.0.0!"
+
+rm -rf "$MISE_DATA_DIR/installs/dummy/1.0.0"
+# A CLI default replaces the consumer's configured default, not an explicit tool.
+assert "mise install 'needs-dummy[runtime_dependencies=dummy@1.0.0]@1.0.0'"
+assert_contains "mise exec 'needs-dummy[runtime_dependencies=dummy@1.0.0]@1.0.0' -- dummy" "This is Dummy 1.0.0!"
+
+# Task-specific selections also bring their dependency onto PATH.
+cat >>mise.toml <<'EOF'
+[tasks.runtime-check]
+tools = { needs-dummy = { version = "1.0.0", runtime_dependencies = ["dummy@1.0.0"] } }
+run = "dummy"
+EOF
+assert_contains "mise run runtime-check" "This is Dummy 1.0.0!"
+# --tool adds another task selection; conflicting defaults must not be guessed.
+assert_fail "mise run --tool 'needs-dummy[runtime_dependencies=dummy@2.0.0]@1.0.0' runtime-check" "conflicting runtime dependency defaults"
+
+# Lockfiles must retain both the consumer and its inferred dependency.
+assert "MISE_LOCKFILE=1 mise lock"
+assert_contains "cat mise.lock" 'tools.dummy'
+assert_contains "MISE_LOCKED=1 MISE_LOCKFILE=1 mise exec -- dummy" "This is Dummy 2.0.0!"
+
+# Equal prefixes in different scopes can have different lockfile pins.
+# Require an explicit shared selection rather than borrowing the wrong lock.
+mkdir -p nested
+cp mise.toml saved.toml
+cat >mise.toml <<'EOF'
+[tools]
+needs-dummy = { version = "1.0.0", runtime_dependencies = ["dummy@1"] }
+EOF
+cat >nested/mise.toml <<'EOF'
+[tools]
+"asdf:runtime-parent" = { version = "1.0.0", runtime_dependencies = ["dummy@1", "needs-dummy@1.0.0"] }
+EOF
+cat >mise.lock <<'EOF'
+lockfile_version = 1
+[[tools.dummy]]
+version = "1.0.0"
+backend = "asdf:dummy"
+specifiers = ["1"]
+EOF
+cat >nested/mise.lock <<'EOF'
+lockfile_version = 1
+[[tools.dummy]]
+version = "1.1.0"
+backend = "asdf:dummy"
+specifiers = ["1"]
+EOF
+assert_fail "MISE_LOCKFILE=1 mise -C nested install" "ambiguous runtime dependency"
+cat >>nested/mise.toml <<'EOF'
+dummy = "2.0.0"
+EOF
+assert "MISE_LOCKFILE=1 mise -C nested install"
+assert_contains "mise -C nested exec -- runtime-parent" "This is Dummy 2.0.0!"
+mv saved.toml mise.toml
+
+# Lazy dependencies can be installed together on the consumer's first use.
+cat >mise.toml <<'EOF'
+[tools]
+needs-dummy = { version = "1.0.0", lazy = true, lazy_bins = ["needs-dummy"], runtime_dependencies = ["dummy@2.0.0"] }
+dummy = { version = "2.0.0", lazy = true, lazy_bins = ["dummy"] }
+EOF
+rm -rf "$MISE_DATA_DIR/installs/needs-dummy" "$MISE_DATA_DIR/installs/dummy"
+assert "mise install"
+assert_directory_not_exists "$MISE_DATA_DIR/installs/dummy/2.0.0"
+assert_contains "MISE_NOT_FOUND_AUTO_INSTALL=0 mise exec -- needs-dummy" "needs-dummy v1.0.0"
+assert_directory_exists "$MISE_DATA_DIR/installs/dummy/2.0.0"
+
+# Invalid graphs fail before installation.
+cat >mise.toml <<'EOF'
+[tools]
+dummy = { version = "2.0.0", runtime_dependencies = ["needs-dummy@1.0.0"] }
+needs-dummy = { version = "1.0.0", runtime_dependencies = ["dummy@2.0.0"] }
+EOF
+assert_fail "mise install" "runtime dependency cycle"
+
+cat >mise.toml <<'EOF'
+[tools]
+needs-dummy = { version = "1.0.0", runtime_dependencies = ["dummy@2.0.0"] }
+EOF
+assert_fail "MISE_DISABLE_TOOLS=dummy mise install" "disabled or unsupported"
+
+cat >mise.toml <<'EOF'
+[tools]
+needs-dummy = { version = "1.0.0", runtime_dependencies = ["dummy@1.0.0", "dummy@2.0.0"] }
+EOF
+assert_fail "mise install" "conflicting runtime dependency defaults"
+
+cat >mise.toml <<'EOF'
+[tools]
+needs-dummy = { version = "1.0.0", runtime_dependencies = ["dummy"] }
+EOF
+assert_fail "mise install" "must specify a version"
+
+cat >mise.toml <<'EOF'
+[tools]
+needs-dummy = { version = "1.0.0", runtime_dependencies = ["dummy@2.0.0"] }
+dummy = ["1.0.0", "2.0.0"]
+EOF
+assert_fail "mise install" "ambiguous runtime dependency"
+
+cat >mise.toml <<'EOF'
+[tools]
+needs-dummy = { version = "1.0.0", runtime_dependencies = ["dummy@2.0.0"] }
+dummy = { version = "2.0.0", os = ["windows"] }
+EOF
+assert_fail "mise install" "disabled or unsupported"
+
+# A failed dependency must prevent the dependent's installer from running.
+cat >mise.toml <<'EOF'
+[tools]
+needs-dummy = { version = "1.0.0", runtime_dependencies = ["dummy@other-dummy"] }
+EOF
+rm -rf "$MISE_DATA_DIR/installs/needs-dummy" "$MISE_DATA_DIR/installs/dummy"
+assert_fail "mise install"
+assert_directory_not_exists "$MISE_DATA_DIR/installs/needs-dummy/1.0.0"

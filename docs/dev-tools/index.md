@@ -80,6 +80,32 @@ activation or shims you can prefix any command with `mise exec --`. An alias
 such as `alias mx='mise exec --'` saves typing. [`mise run`](/tasks/) loads the
 same tools and environment for tasks.
 
+## Runtime dependencies
+
+The `runtime_dependencies` tool option installs and activates other tools with
+the tool that needs them. Each entry must specify a version:
+
+```toml
+[tools]
+"github:example/acme" = { version = "1.2.3", runtime_dependencies = ["node@24"] }
+```
+
+Registry recipes can supply this option, so projects only declare the main
+tool. Dependencies are installed first and included on PATH. `mise use` writes
+only the requested tool to the configuration. Dependencies use their consumer's
+lockfile source and remain in use for pruning while the consumer is configured.
+
+An explicit selection for a dependency overrides the default. Conflicting
+defaults, multiple active versions of a dependency, disabled dependencies, and
+cycles are errors. This is separate from `depends`, which orders existing
+tool selections without automatically selecting versions. These are default
+selectors, not compatibility constraints: an override is not checked against
+the consumer's requirements. `lazy` applies independently to each tool; mark a
+dependency lazy as well to defer its installation. Tasks that prepare conflicting
+dependency defaults together must select a shared explicit version. Inferred
+requests from separate configuration scopes can own different lockfile pins;
+select the dependency explicitly when those requests are ambiguous.
+
 ## How mise selects a tool {#how-tools-are-selected}
 
 1. mise reads `mise.toml` and other config files from the current directory,

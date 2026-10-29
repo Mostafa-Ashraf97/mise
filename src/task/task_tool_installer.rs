@@ -83,7 +83,11 @@ impl<'a> TaskToolInstaller<'a> {
         trace!("Collecting tools from {} tasks", tasks.len());
 
         for task in tasks {
-            requests.extend(task.tool_args()?.into_iter().filter_map(|tool| tool.tvr));
+            let task_requests = task
+                .tool_args()?
+                .into_iter()
+                .filter_map(|tool| tool.tvr)
+                .collect::<Vec<_>>();
 
             // Task execution combines task-level tools with the config hierarchy
             // that owns the task. Keep pre-installation consistent with that
@@ -94,13 +98,23 @@ impl<'a> TaskToolInstaller<'a> {
                 .or_else(|| task.config_root.clone());
             if let Some(config_root) = config_root {
                 let config_root = canonicalize_path(&config_root);
-                if seen_config_roots.insert(config_root.clone()) {
+                if !task_requests.is_empty() || seen_config_roots.insert(config_root.clone()) {
                     requests.extend(
                         self.collect_tools_from_dir(&config_root, &task.name)
-                            .await?,
+                            .await?
+                            .into_iter()
+                            .filter(|configured| {
+                                !task_requests.iter().any(|task| {
+                                    crate::install_context::backend_args_match(
+                                        task.ba(),
+                                        configured.ba(),
+                                    )
+                                })
+                            }),
                     );
                 }
             }
+            requests.extend(task_requests);
         }
 
         Ok(requests)

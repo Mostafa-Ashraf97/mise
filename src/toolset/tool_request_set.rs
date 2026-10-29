@@ -138,6 +138,7 @@ pub struct ToolRequestSetBuilder {
     enable_tools: Option<BTreeSet<BackendArg>>,
     config_files: Option<ConfigMap>,
     skip_runtime_args: bool,
+    skip_runtime_dependencies: bool,
 }
 
 impl ToolRequestSetBuilder {
@@ -174,6 +175,11 @@ impl ToolRequestSetBuilder {
         self
     }
 
+    pub(crate) fn without_runtime_dependencies(mut self) -> Self {
+        self.skip_runtime_dependencies = true;
+        self
+    }
+
     pub(crate) async fn build(&self, config: &Arc<Config>) -> eyre::Result<ToolRequestSet> {
         let mut trs = ToolRequestSet::default();
         trs = self.load_config_files(config, trs).await?;
@@ -196,6 +202,14 @@ impl ToolRequestSetBuilder {
             }
         }
 
+        if !self.skip_runtime_dependencies {
+            let requests = trs.tools.values().flatten().cloned().collect::<Vec<_>>();
+            for request in super::runtime_dependencies::expand(&requests, &requests)? {
+                if !requests.contains(&request) {
+                    trs.add_version(request.clone(), request.source());
+                }
+            }
+        }
         time!("tool_request_set::build");
         Ok(trs)
     }

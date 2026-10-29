@@ -342,7 +342,25 @@ impl Toolset {
         // tool selected by the caller. Track dependencies by their full request
         // key, rather than just their backend, so that private runtimes are not
         // returned to callers such as `mise use` and persisted as user tools.
-        let private_dependency_keys = self.add_private_install_dependencies(&mut versions)?;
+        // Inferred defaults are not explicit selections: a CLI request may replace
+        // its consumer's defaults while retaining actual configured overrides.
+        let configured = super::ToolRequestSetBuilder::new()
+            .without_runtime_dependencies()
+            .build(config)
+            .await?
+            .tools
+            .values()
+            .flatten()
+            .cloned()
+            .collect_vec();
+        let expanded = super::runtime_dependencies::expand(&versions, &configured)?;
+        let mut private_dependency_keys = expanded
+            .iter()
+            .filter(|request| !versions.contains(request))
+            .map(graph_key)
+            .collect::<HashSet<_>>();
+        versions = expanded;
+        private_dependency_keys.extend(self.add_private_install_dependencies(&mut versions)?);
         ensure_compatible_install_requests(&versions)?;
         ensure_safe_install_options(&versions)?;
 
