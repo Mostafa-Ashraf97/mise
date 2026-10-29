@@ -1,0 +1,110 @@
+name: Runtime dependency fork verification
+
+on:
+  push:
+    branches: [feat-runtime-dependencies]
+
+concurrency:
+  group: runtime-dependencies-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  danger:
+    if: github.repository == 'Mostafa-Ashraf97/mise'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-26.04, macos-26-intel]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 100
+    env:
+      MBX_DISABLE: "1"
+      CARGO_BUILD_JOBS: "2"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_INCREMENTAL: "0"
+      TEST_ALL: "1"
+      MISE_TRUSTED_CONFIG_PATHS: ${{ github.workspace }}
+      MISE_GITHUB_TOKEN: ${{ github.token }}
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Linux build and test prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          cat /etc/os-release
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libssl-dev clang libclang-dev zsh fish jq gnupg libcurl4-openssl-dev libxml2-dev libicu-dev libsqlite3-dev libedit-dev libncurses-dev libz-dev
+      - name: macOS build and test prerequisites
+        if: runner.os == 'macOS'
+        run: |
+          brew install coreutils openssl@3 pkg-config gnupg
+          echo "$(brew --prefix coreutils)/libexec/gnubin" >> "$GITHUB_PATH"
+          echo "OPENSSL_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
+          xcrun swift --version
+      - name: Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy --component rustfmt
+          rustup default stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          shared-key: runtime-dependencies-${{ matrix.os }}
+          cache-on-failure: true
+      - name: Build proposed mise
+        run: |
+          cargo build --all-features
+          echo "$PWD/target/debug" >> "$GITHUB_PATH"
+          target/debug/mise --version
+      - name: Check changed files with upstream linters
+        if: runner.os == 'Linux'
+        working-directory: ${{ runner.temp }}
+        shell: bash
+        run: |
+          "$GITHUB_WORKSPACE/target/debug/mise" x node@24 npm:markdownlint-cli@latest npm:ajv-cli@5.0.0 npm:oxfmt@0.74.0 tombi@1.9.7 shfmt@3.14.1 shellcheck@0.11.0 taplo@0.10.0 -- bash -euo pipefail <<'LINT'
+            cd "$GITHUB_WORKSPACE"
+            shfmt -d --apply-ignore e2e/core/test_swift_slow e2e/backend/test_runtime_dependencies
+            shellcheck -x e2e/core/test_swift_slow e2e/backend/test_runtime_dependencies
+            taplo fmt --check registry/danger-swift.toml
+            taplo check registry/danger-swift.toml
+            ajv compile -s schema/mise.json --spec=draft2020 --strict-types=true --strict-tuples=true
+            ajv compile -s schema/mise-task.json --spec=draft2020 --strict-types=true --strict-tuples=true
+            tombi lint --error-on-warnings schema/tombi-fixtures/*.toml
+            markdownlint docs/dev-tools/backends/spm.md docs/dev-tools/index.md
+            oxfmt --check --no-error-on-unmatched-pattern docs/dev-tools/backends/spm.md docs/dev-tools/index.md schema/mise.json schema/mise-task.json
+            node docs/.vitepress/llms.ts
+            git diff --exit-code -- docs/public/llms.txt
+          LINT
+      - name: Check Rust and generated schemas
+        run: |
+          cargo fmt --all -- --check
+          cargo test -p mise-config schema::tests
+      - name: Strict workspace Clippy
+        if: runner.os == 'Linux'
+        run: cargo clippy --workspace --all-features --all-targets -- -D warnings
+      - name: Test runtime dependency behavior
+        shell: bash
+        run: |
+          set -o pipefail
+          target/debug/mise run --skip-deps --skip-tools test:e2e \
+            '^test_runtime_dependencies$' '^test_tool_depends$' \
+            '^test_lazy_tools_depends$' '^test_lockfile_runtime_scope$' \
+            '^test_task_tools$' '^test_task_tools_env_cache$' \
+            '^test_install_task_tools$' '^test_task_parallel_shared_tool_install$' \
+            2>&1 | tee "$RUNNER_TEMP/danger-runtime-e2e.log"
+      - name: Test real Swift and Danger installation
+        shell: bash
+        run: |
+          set -o pipefail
+          target/debug/mise run --skip-deps --skip-tools test:e2e '^test_swift_slow$' \
+            2>&1 | tee "$RUNNER_TEMP/danger-swift-e2e.log"
+      - name: Save test logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: danger-swift-${{ matrix.os }}
+          path: ${{ runner.temp }}/danger-*-e2e.log
+          if-no-files-found: ignore
