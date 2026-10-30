@@ -1,0 +1,70 @@
+name: Lokalise fork verification
+
+on:
+  push:
+    branches: [registry-lokalise2]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lokalise-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lokalise:
+    if: github.repository == 'Mostafa-Ashraf97/mise'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      MBX_DISABLE: "1"
+      CARGO_BUILD_JOBS: "2"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_INCREMENTAL: "0"
+      MISE_DATA_DIR: ${{ runner.temp }}/lokalise-data
+      MISE_CACHE_DIR: ${{ runner.temp }}/lokalise-cache
+      MISE_STATE_DIR: ${{ runner.temp }}/lokalise-state
+      MISE_CONFIG_DIR: ${{ runner.temp }}/lokalise-config
+      MISE_TRUSTED_CONFIG_PATHS: ${{ github.workspace }}
+      MISE_GITHUB_TOKEN: ${{ github.token }}
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+        with:
+          shared-key: lokalise-${{ matrix.os }}
+      - name: Build mise with the new registry entry
+        run: cargo build --locked --all-features
+      - name: Validate registry formatting and schema
+        working-directory: ${{ runner.temp }}
+        shell: bash
+        run: |
+          "$GITHUB_WORKSPACE/target/debug/mise" exec taplo@0.10.0 -- bash -euo pipefail <<'LINT'
+            cd "$GITHUB_WORKSPACE"
+            taplo fmt --check registry/lokalise2.toml
+            taplo check registry/lokalise2.toml
+          LINT
+      - name: Test shorthand, pinned version and explicit backend compatibility
+        working-directory: ${{ runner.temp }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mise_bin="$GITHUB_WORKSPACE/target/debug/mise"
+          "$mise_bin" registry lokalise2
+          "$mise_bin" ls-remote lokalise2
+          "$mise_bin" test-tool lokalise2@3.1.4
+          "$mise_bin" test-tool lokalise2
+          "$mise_bin" install github:lokalise/lokalise-cli-2-go@3.1.4
+          "$mise_bin" exec github:lokalise/lokalise-cli-2-go@3.1.4 -- lokalise2 --version | grep -Fx 'lokalise2 version 3.1.4'
+          "$mise_bin" exec lokalise2@3.1.4 -- lokalise2 --help
