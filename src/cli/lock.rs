@@ -2732,6 +2732,8 @@ impl Lock {
             .await?;
 
         if self.tool.is_empty() {
+            self.add_runtime_dependency_locks(context, target_lockfile_path, &mut all_tools)
+                .await?;
             let requests = selected_python_requests(&all_tools)?;
             self.add_selected_python_locks(
                 config,
@@ -2872,6 +2874,9 @@ impl Lock {
             for tool in project_python {
                 push_unique_lock_tool(&mut unique_tools, tool);
             }
+            self.add_runtime_dependency_locks(context, target_lockfile_path, &mut unique_tools)
+                .await?;
+            python_requests.extend(selected_python_requests(&unique_tools)?);
             self.add_selected_python_locks(
                 config,
                 context,
@@ -2882,6 +2887,59 @@ impl Lock {
             .await?;
             Ok(unique_tools)
         }
+    }
+
+    async fn add_runtime_dependency_locks(
+        &self,
+        context: &LockCollectionContext<'_>,
+        target_lockfile_path: &Path,
+        tools: &mut Vec<LockTool>,
+    ) -> Result<()> {
+        let roots = tools
+            .iter()
+            .map(|(_, tv)| tv.request.clone())
+            .collect::<Vec<_>>();
+        let configured = context
+            .toolset
+            .versions
+            .values()
+            .flat_map(|versions| versions.requests.iter())
+            .filter(|request| request.is_configured_in_source(context.config_files))
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut dependencies = Vec::new();
+        for platform in self.determine_target_platforms(target_lockfile_path)? {
+            for request in crate::toolset::runtime_dependencies::expand_on(
+                &roots,
+                &configured,
+                Some(&platform),
+            )? {
+                if !dependencies.contains(&request) {
+                    dependencies.push(request);
+                }
+            }
+        }
+        for request in dependencies {
+            if roots.contains(&request)
+                || !lockfile::lockfile_path_for_tool_source(
+                    context.config,
+                    request.lockfile_owner_source(),
+                )
+                .is_some_and(|(path, _)| path == target_lockfile_path)
+            {
+                continue;
+            }
+            let mut opts = request.resolve_options(context.resolve_options)?;
+            if self.bump || opts.before_date.is_some() {
+                opts.use_locked_version = false;
+                opts.latest_versions = true;
+            }
+            let tv = resolve_for_lock(context.config, &request, &mut opts)
+                .await
+                .wrap_err_with(|| format!("failed to lock runtime dependency {request}"))?;
+            push_unique_lock_tool(tools, (tv.ba().clone(), tv));
+        }
+        Ok(())
     }
 
     async fn add_selected_python_locks(
@@ -2918,7 +2976,7 @@ impl Lock {
         let python_named = self.tool.iter().any(|t| t.ba.short == "python");
         for task in tasks.values() {
             let Some(config_path) =
-                self.task_config_path(task, config, config_paths, context.config_files)
+                task.tool_config_path(config, context.config_files, Some(config_paths))
             else {
                 continue;
             };
@@ -2930,7 +2988,7 @@ impl Lock {
                 continue;
             }
 
-            for tool in task.tool_args().map_err(|err| {
+            for tool in task.tool_args(config).map_err(|err| {
                 err.wrap_err(format!("failed to parse tools for task `{}`", task.name))
             })? {
                 let named = self.tool.is_empty()
@@ -3001,46 +3059,6 @@ impl Lock {
             }
         }
         Ok(unnamed_python_requests)
-    }
-
-    fn task_config_path(
-        &self,
-        task: &Task,
-        config: &Config,
-        config_paths: &[PathBuf],
-        effective_config_files: &ConfigMap,
-    ) -> Option<PathBuf> {
-        if let Some(cf) = task.cf(config) {
-            let path = cf.get_path();
-            return config_paths
-                .iter()
-                .any(|candidate| candidate == path)
-                .then(|| path.to_path_buf());
-        }
-
-        let config_root = task.config_root.as_ref()?;
-        effective_config_files
-            .iter()
-            .filter(|(path, cf)| {
-                config_paths.iter().any(|candidate| candidate == *path)
-                    && cf.source().is_mise_toml()
-                    && cf
-                        .project_root()
-                        .unwrap_or_else(|| cf.config_root())
-                        .as_path()
-                        == config_root
-            })
-            .max_by_key(|(path, _)| {
-                let (lockfile_path, _) = lockfile::lockfile_path_for_config(
-                    path,
-                    config.monorepo_lockfile_root().as_deref(),
-                );
-                let is_base = lockfile_path
-                    .file_name()
-                    .is_some_and(|name| name == "mise.lock");
-                (is_base, path.components().count())
-            })
-            .map(|(path, _)| path.clone())
     }
 
     fn show_dry_run(&self, tools: &[LockTool], platforms: &[Platform]) -> Result<()> {

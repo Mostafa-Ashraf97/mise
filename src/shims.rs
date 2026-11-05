@@ -90,6 +90,8 @@ struct TaskToolArg {
     backend: String,
     version: Option<String>,
     options: crate::toolset::ToolVersionOptions,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    lockfile_source: Option<PathBuf>,
 }
 
 /// Preserve runtime-only task tool requests for a shim process. A task's `tools`
@@ -106,6 +108,15 @@ pub fn task_tool_args_env(tools: &[ToolArg]) -> Result<Option<String>> {
                 .as_ref()
                 .map(|request| request.options())
                 .unwrap_or_default(),
+            lockfile_source: tool
+                .tvr
+                .as_ref()
+                .and_then(|request| match request.lockfile_scope() {
+                    crate::toolset::tool_request::LockfileScope::Source(source) => {
+                        source.path().map(Path::to_path_buf)
+                    }
+                    _ => None,
+                }),
         })
         .collect_vec();
     if tools.is_empty() {
@@ -141,6 +152,11 @@ pub fn task_tool_args_from_env() -> Result<Vec<ToolArg>> {
                     )
                 })
                 .transpose()?;
+            if let (Some(request), Some(path)) = (&mut arg.tvr, tool.lockfile_source) {
+                request.set_lockfile_scope(crate::toolset::tool_request::LockfileScope::Source(
+                    crate::toolset::ToolSource::MiseToml(path),
+                ));
+            }
             Ok(arg)
         })
         .collect()

@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+
+plugin="$MISE_DATA_DIR/plugins/asdf-runtime-task"
+mkdir -p "$plugin/bin"
+cat >"$plugin/bin/list-all" <<'EOF'
+#!/usr/bin/env bash
+echo 1.0.0
+EOF
+cat >"$plugin/bin/install" <<'EOF'
+#!/usr/bin/env bash
+set -eu
+dummy >"$ASDF_INSTALL_PATH/selected-runtime"
+mkdir -p "$ASDF_INSTALL_PATH/bin"
+printf '#!/usr/bin/env bash\ndummy\n' >"$ASDF_INSTALL_PATH/bin/runtime-task"
+chmod +x "$ASDF_INSTALL_PATH/bin/runtime-task"
+EOF
+chmod +x "$plugin/bin/"*
+cat >mise.toml <<'EOF'
+[tasks.check]
+tools = { "asdf:runtime-task" = { version = "1.0.0", runtime_dependencies = ["dummy@2.0.0"] } }
+run = "runtime-task"
+EOF
+assert_contains "mise run check" "This is Dummy 2.0.0!"
+
+# Task pins override project pins inside the installer as well as at runtime.
+rm -rf "$(mise where asdf:runtime-task@1.0.0)" "$MISE_DATA_DIR/installs/dummy"
+cat >mise.toml <<'EOF'
+[tools]
+dummy = "1.0.0"
+[tasks.check]
+tools = { "asdf:runtime-task" = { version = "1.0.0", runtime_dependencies = ["dummy@1.0.0"] }, dummy = "2.0.0" }
+run = "runtime-task"
+EOF
+assert_contains "mise run check" "This is Dummy 2.0.0!"
+assert_contains "cat \"$(mise where asdf:runtime-task@1.0.0)/selected-runtime\"" "This is Dummy 2.0.0!"
+
+# Direct CLI requests must also expose their dependencies during installation.
+rm -rf "$(mise where asdf:runtime-task@1.0.0)" "$MISE_DATA_DIR/installs/dummy"
+printf '' >mise.toml
+assert "mise use 'asdf:runtime-task[runtime_dependencies=dummy@1.0.0]@1.0.0'"
+assert_contains "mise exec -- runtime-task" "This is Dummy 1.0.0!"
+assert_fail "grep -E '^dummy[ =]' mise.toml"
+
+# Explicit dependency arguments override defaults when both tools are new.
+rm -rf "$(mise where asdf:runtime-task@1.0.0)" "$MISE_DATA_DIR/installs/dummy"
+printf '' >mise.toml
+assert "mise use 'asdf:runtime-task[runtime_dependencies=dummy@1.0.0]@1.0.0' dummy@2.0.0"
+assert_contains "mise exec -- runtime-task" "This is Dummy 2.0.0!"
+
+# The same CLI override wins over an older configured dependency.
+rm -rf "$(mise where asdf:runtime-task@1.0.0)"
+cat >mise.toml <<'EOF'
+[tools]
+dummy = "1.0.0"
+EOF
+assert "mise use 'asdf:runtime-task[runtime_dependencies=dummy@1.0.0]@1.0.0' dummy@2.0.0"
+assert_contains "cat \"$(mise where asdf:runtime-task@1.0.0)/selected-runtime\"" "This is Dummy 2.0.0!"
+
+# Resolving inferred tools must not recreate an overridden transitive default.
+rm -rf "$(mise where asdf:runtime-task@1.0.0)" "$MISE_DATA_DIR/installs/needs-dummy" "$MISE_DATA_DIR/installs/dummy"
+printf '' >mise.toml
+assert "mise use \"asdf:runtime-task[runtime_dependencies=\\\"needs-dummy[runtime_dependencies='dummy@1.0.0']@1.0.0\\\"]@1.0.0\" dummy@2.0.0"
+assert_contains "mise exec -- runtime-task" "This is Dummy 2.0.0!"

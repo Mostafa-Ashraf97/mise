@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+
+cat >mise.toml <<'EOF'
+[tasks.check]
+tools = { needs-dummy = { version = "1.0.0", runtime_dependencies = ["dummy@1"] } }
+run = "dummy"
+EOF
+assert "MISE_LOCKFILE=1 mise lock"
+assert_contains "cat mise.lock" 'tools.dummy'
+assert_contains "MISE_LOCKFILE=1 MISE_LOCKED=1 mise run check" "This is Dummy 1.1.0!"
+assert_not_contains "mise prune --dry-run" "dummy@1.1.0 is prunable"
+
+rm mise.lock
+assert "MISE_LOCKFILE=1 mise lock needs-dummy"
+assert_contains "cat mise.lock" 'tools.dummy'
+
+rm mise.lock
+assert "MISE_LOCKFILE=1 MISE_LOCKFILE_MODE=generate mise lock"
+assert_contains "cat mise.lock" 'tools.dummy'
+assert_contains "MISE_LOCKFILE=1 MISE_LOCKFILE_MODE=generate MISE_LOCKED=1 mise run check" "This is Dummy 1.1.0!"
+
+# A lock pin must win even when a newer matching version is already installed.
+assert "mise install dummy@1.0.0"
+sed -i.bak 's/version = "1.1.0"/version = "1.0.0"/' mise.lock
+assert_contains "MISE_LOCKFILE=1 MISE_LOCKED=1 mise run check" "This is Dummy 1.0.0!"
+# A shim launched by the task must preserve the same lockfile owner.
+sed -i.bak '/^run = /d' mise.toml
+cat >>mise.toml <<'EOF'
+run = '"$MISE_DATA_DIR/shims/dummy"'
+EOF
+assert_contains "MISE_LOCKFILE=1 MISE_LOCKED=1 mise run check" "This is Dummy 1.0.0!"
+
+# Included task files use the owning mise config's lockfile too.
+sed 's/\[tasks.check\]/[check]/' mise.toml >tasks.toml
+cat >mise.toml <<'EOF'
+[task_config]
+includes = ["tasks.toml"]
+EOF
+assert_contains "MISE_LOCKFILE=1 MISE_LOCKED=1 mise run check" "This is Dummy 1.0.0!"

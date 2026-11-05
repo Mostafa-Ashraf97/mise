@@ -13,6 +13,7 @@ pub const EPHEMERAL_OPT_KEYS: &[&str] = &[
     "postinstall",
     "install_env",
     "depends",
+    "runtime_dependencies",
     "install_before",
     "minimum_release_age",
     "version_order",
@@ -665,6 +666,14 @@ impl ToolOptions {
                 self.os = Some(parse_string_or_array(value, "os")?);
                 Ok(true)
             }
+            "runtime_dependencies" => {
+                let dependencies = parse_string_or_array(value, key)?;
+                self.opts.insert(
+                    key.to_string(),
+                    toml::Value::Array(dependencies.into_iter().map(toml::Value::String).collect()),
+                );
+                Ok(true)
+            }
             "depends" => {
                 self.depends = Some(parse_string_or_array(value, "depends")?);
                 Ok(true)
@@ -858,7 +867,7 @@ impl ToolOptions {
     }
 }
 
-fn parse_string_or_array(value: &toml::Value, key: &str) -> Result<Vec<String>, String> {
+pub(super) fn parse_string_or_array(value: &toml::Value, key: &str) -> Result<Vec<String>, String> {
     match value {
         toml::Value::String(s) => Ok(vec![s.clone()]),
         toml::Value::Array(values) => values

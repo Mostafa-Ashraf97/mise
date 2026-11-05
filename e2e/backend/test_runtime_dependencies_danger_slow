@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+
+cat >mise.toml <<'EOF'
+[tools]
+danger-swift = "3.21.2"
+EOF
+cp mise.toml expected.toml
+assert "mise install"
+assert "cmp mise.toml expected.toml"
+assert_matches "mise exec -- which node" '/installs/node/'
+assert_matches "mise exec -- which danger" '/installs/danger-js/'
+assert_matches "mise exec -- danger-swift --version" '^3\.21\.2'
+assert_matches "mise exec -- danger --version" '^13\.0\.10'
+assert_matches "mise exec -- node --version" '^v24\.'
+
+cat >Dangerfile.swift <<'EOF'
+import Danger
+let danger = Danger()
+danger.fail("runtime dependency check")
+EOF
+git init -q -b main
+git add Dangerfile.swift
+git commit -qm initial
+git checkout -qb check
+echo change >changed.txt
+git add changed.txt
+git commit -qm change
+export CFFIXED_USER_HOME="$HOME"
+assert_fail "mise exec -- danger-swift local --base main --failOnErrors" "runtime dependency check"

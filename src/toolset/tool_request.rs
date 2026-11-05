@@ -276,6 +276,22 @@ impl ToolRequest {
             | Self::System { source, .. } => source,
         }
     }
+
+    /// Inferred runtime requirements borrow a config's lockfile ownership without
+    /// declaring an entry that commands such as `upgrade --bump` may rewrite.
+    pub fn is_configured_in_source(&self, config_files: &crate::config::ConfigMap) -> bool {
+        self.source()
+            .path()
+            .and_then(|path| config_files.get(path))
+            .is_some_and(|cf| {
+                cf.to_tool_request_set().is_ok_and(|requests| {
+                    requests
+                        .tools
+                        .keys()
+                        .any(|ba| crate::install_context::backend_args_match(ba, self.ba()))
+                })
+            })
+    }
     pub fn lockfile_scope(&self) -> &LockfileScope {
         match self {
             Self::Version { lockfile_scope, .. }

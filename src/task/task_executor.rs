@@ -3047,7 +3047,7 @@ impl TaskExecutor {
         otel_span_cx: Option<&opentelemetry::trace::SpanContext>,
     ) -> Result<PreparedTaskContext> {
         let mut tools = self.tool.clone();
-        tools.extend(task.tool_args()?);
+        tools.extend(task.tool_args(config)?);
         let task_tool_args_env = crate::shims::task_tool_args_env(&tools)?;
         let ts_build_start = std::time::Instant::now();
 

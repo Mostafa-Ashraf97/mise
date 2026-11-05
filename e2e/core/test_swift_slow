@@ -66,7 +66,9 @@ if [[ $(uname -s) == Darwin ]]; then
   # Keep mise-managed Swift active to exercise the installer's xcrun selection.
   assert_matches "mise x -- which swift" '/installs/swift/'
 fi
-mise install node@24 danger-swift@3.22.1 npm:danger@13.0.10
+mise install danger-swift@3.22.1
+assert_matches "mise x danger-swift@3.22.1 -- which node" '/installs/node/'
+assert_matches "mise x danger-swift@3.22.1 -- which danger" '/installs/danger-js/'
 danger_install_path="$(mise where danger-swift@3.22.1)"
 test -x "$danger_install_path/bin/danger-swift"
 test -f "$danger_install_path/lib/danger/libDanger.dylib" ||
@@ -95,7 +97,7 @@ git commit -q -m change
 export CFFIXED_USER_HOME="$HOME"
 
 danger_output="$(
-  mise x node@24 danger-swift@3.22.1 npm:danger@13.0.10 -- danger-swift local 2>&1
+  mise x danger-swift@3.22.1 -- danger-swift local 2>&1
 )"
 assert_contains_text "$danger_output" "Danger: ⅹ Failing the build"
 assert_contains_text "$danger_output" "mise Danger Swift integration test"

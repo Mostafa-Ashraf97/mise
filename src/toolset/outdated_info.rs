@@ -113,6 +113,9 @@ impl OutdatedInfo {
         opts: &ResolveOptions,
     ) -> eyre::Result<Option<Self>> {
         let t = tv.backend()?;
+        let bump = bump
+            && (tv.request.source().path().is_none()
+                || tv.request.is_configured_in_source(&config.config_files));
         // prefix is something like "temurin-" or "corretto-"
         let (prefix, prefix_version) = split_version_prefix(&tv.request.version());
         let use_backend_latest =

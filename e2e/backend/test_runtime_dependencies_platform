@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+
+cat >mise.toml <<'EOF'
+[tools]
+needs-dummy = { version = "1.0.0", runtime_dependencies = ["dummy@2.0.0"] }
+dummy = [{ version = "1.0.0", os = ["macos", "linux"] }, { version = "2.0.0", os = ["windows"] }]
+EOF
+assert "mise install"
+assert_contains "mise exec -- dummy" "This is Dummy 1.0.0!"

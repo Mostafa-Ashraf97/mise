@@ -138,6 +138,7 @@ pub struct ToolRequestSetBuilder {
     enable_tools: Option<BTreeSet<BackendArg>>,
     config_files: Option<ConfigMap>,
     skip_runtime_args: bool,
+    skip_runtime_dependencies: bool,
 }
 
 impl ToolRequestSetBuilder {
@@ -174,6 +175,11 @@ impl ToolRequestSetBuilder {
         self
     }
 
+    pub(crate) fn without_runtime_dependencies(mut self) -> Self {
+        self.skip_runtime_dependencies = true;
+        self
+    }
+
     pub(crate) async fn build(&self, config: &Arc<Config>) -> eyre::Result<ToolRequestSet> {
         let mut trs = ToolRequestSet::default();
         trs = self.load_config_files(config, trs).await?;
@@ -196,6 +202,14 @@ impl ToolRequestSetBuilder {
             }
         }
 
+        if !self.skip_runtime_dependencies {
+            let requests = trs.tools.values().flatten().cloned().collect::<Vec<_>>();
+            for request in super::runtime_dependencies::expand(&requests, &requests)? {
+                if !requests.contains(&request) {
+                    trs.add_version(request.clone(), request.source());
+                }
+            }
+        }
         time!("tool_request_set::build");
         Ok(trs)
     }
@@ -203,10 +217,14 @@ impl ToolRequestSetBuilder {
     /// Whether the tool is ignored: an unknown backend, an unsupported platform, or
     /// `enable_tools` / `disable_tools` leaving it out.
     pub fn is_disabled(&self, ba: &BackendArg) -> bool {
-        let backend_type = ba.backend_type();
-        backend_type == BackendType::Unknown
-            || (cfg!(windows) && backend_type == BackendType::Asdf)
+        self.is_disabled_for_lock(ba)
+            || (cfg!(windows) && ba.backend_type() == BackendType::Asdf)
             || !ba.is_os_supported()
+    }
+
+    /// Locking foreign platforms does not require the tool to run on this host.
+    pub(crate) fn is_disabled_for_lock(&self, ba: &BackendArg) -> bool {
+        ba.backend_type() == BackendType::Unknown
             || !tool_enabled(self.enable_tools.as_ref(), &self.disable_tools, ba)
     }
 

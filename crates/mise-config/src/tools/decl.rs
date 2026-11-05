@@ -70,6 +70,8 @@ pub struct ToolOptions {
     pub version: Option<String>,
     /// path to a custom compiled version
     pub path: Option<String>,
+    /// tools to install and activate with this tool, as tool@version requests
+    pub runtime_dependencies: Option<OneOrManyStrings>,
     /// version prefix to resolve
     pub prefix: Option<String>,
     /// version control reference to compile

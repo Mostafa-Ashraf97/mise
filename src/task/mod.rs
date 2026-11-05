@@ -1246,11 +1246,62 @@ impl Task {
             && self.additional_config_sources.iter().all(|p| trusted(p))
     }
 
-    pub fn tool_args(&self) -> Result<Vec<ToolArg>> {
+    pub fn tool_args(&self, config: &Config) -> Result<Vec<ToolArg>> {
+        let owner = self.tool_config_path(config, &config.config_files, None);
         self.tools
             .iter()
-            .map(|(tool, value)| value.to_tool_arg(tool))
+            .map(|(tool, value)| {
+                let mut arg = value.to_tool_arg(tool)?;
+                if let (Some(request), Some(owner)) = (&mut arg.tvr, &owner) {
+                    request.set_lockfile_scope(
+                        crate::toolset::tool_request::LockfileScope::Source(
+                            crate::toolset::ToolSource::MiseToml(owner.clone()),
+                        ),
+                    );
+                }
+                Ok(arg)
+            })
             .collect()
+    }
+
+    /// Config that owns task-tool lock entries, including file and included tasks.
+    pub fn tool_config_path(
+        &self,
+        config: &Config,
+        effective_config_files: &crate::config::ConfigMap,
+        config_paths: Option<&[PathBuf]>,
+    ) -> Option<PathBuf> {
+        let eligible = |path: &Path| {
+            config_paths.is_none_or(|paths| paths.iter().any(|candidate| candidate == path))
+        };
+        if let Some(cf) = self.cf(config) {
+            let path = cf.get_path();
+            return eligible(path).then(|| path.to_path_buf());
+        }
+
+        let config_root = self.config_root.as_ref()?;
+        effective_config_files
+            .iter()
+            .filter(|(path, cf)| {
+                eligible(path)
+                    && cf.source().is_mise_toml()
+                    && cf
+                        .project_root()
+                        .unwrap_or_else(|| cf.config_root())
+                        .as_path()
+                        == config_root
+            })
+            .max_by_key(|(path, _)| {
+                let (lockfile_path, _) = crate::lockfile::lockfile_path_for_config(
+                    path,
+                    config.monorepo_lockfile_root().as_deref(),
+                );
+                let is_base = lockfile_path
+                    .file_name()
+                    .is_some_and(|name| name == "mise.lock");
+                (is_base, path.components().count())
+            })
+            .map(|(path, _)| path.clone())
     }
 
     pub fn new(path: &Path, prefix: &Path, config_root: &Path) -> Result<Task> {

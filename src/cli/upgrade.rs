@@ -400,7 +400,7 @@ impl Upgrade {
                     continue;
                 };
                 let Some((configured_ba, configured_request)) =
-                    effective_persistable_request(&effective, &tool.ba)
+                    effective_persistable_request(&effective, &tool.ba, &config)
                 else {
                     if let Some((_, versions)) = effective
                         .versions
@@ -605,7 +605,9 @@ impl Upgrade {
                     {
                         continue;
                     }
-                    let Some((_, configured)) = effective_persistable_request(&ts, tv.ba()) else {
+                    let Some((_, configured)) =
+                        effective_persistable_request(&ts, tv.ba(), &config)
+                    else {
                         continue;
                     };
                     let Some(path) = configured.source().path() else {
@@ -869,7 +871,11 @@ impl Upgrade {
                         }
                     }
                 };
-                if let Some(cf) = cf {
+                if let Some(cf) = cf
+                    && o.tool_version
+                        .request
+                        .is_configured_in_source(&config.config_files)
+                {
                     outdated_with_config_files.push((o, cf));
                 }
             }
@@ -1708,6 +1714,7 @@ fn explicit_bump_matches_successful(
 fn effective_persistable_request<'a>(
     toolset: &'a Toolset,
     requested: &BackendArg,
+    config: &Config,
 ) -> Option<(&'a Arc<BackendArg>, &'a ToolRequest)> {
     let (ba, versions) = toolset
         .versions
@@ -1721,6 +1728,7 @@ fn effective_persistable_request<'a>(
     if supported.next().is_some()
         || request.source().path().is_none()
         || request.source().is_mise_toml_daemon()
+        || !request.is_configured_in_source(&config.config_files)
     {
         return None;
     }

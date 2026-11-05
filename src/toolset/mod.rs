@@ -61,6 +61,7 @@ mod install_options;
 pub mod install_state;
 pub mod outdated_info;
 mod running;
+pub mod runtime_dependencies;
 mod tool_deps;
 pub(crate) mod tool_request;
 mod tool_request_set;
@@ -191,6 +192,7 @@ impl Toolset {
         opts: &ResolveOptions,
         show_progress: bool,
     ) -> eyre::Result<()> {
+        self.add_runtime_dependencies()?;
         let mut progress = show_progress
             .then(|| {
                 // A lazy tool left for its first run is not looked up, so listing

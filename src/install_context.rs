@@ -154,10 +154,34 @@ pub struct InstallDependencyContext {
 }
 
 impl InstallDependencyContext {
-    async fn resolve(config: &Arc<Config>, request: &ToolRequest) -> Result<Self> {
+    async fn resolve(config: &Arc<Config>, ts: &Toolset, request: &ToolRequest) -> Result<Self> {
         let declarations = install_dependency_declarations(request);
         declarations.validate()?;
-        let requests = declarations.matching_requests(config.get_tool_request_set().await?);
+        let mut selected: ToolRequestSet = ts
+            .versions
+            .iter()
+            .map(|(ba, versions)| {
+                (
+                    ba.clone(),
+                    versions.requests.clone(),
+                    versions.source.clone(),
+                )
+            })
+            .collect();
+        // A targeted install can omit already-installed dependencies from `ts`.
+        // Retain those config selections, but let task/CLI selections win.
+        for (ba, requests, _) in config.get_tool_request_set().await?.iter() {
+            if !selected
+                .tools
+                .keys()
+                .any(|active| backend_args_match(active, ba))
+            {
+                for dependency in requests {
+                    selected.add_version(dependency.clone(), dependency.source());
+                }
+            }
+        }
+        let requests = declarations.matching_requests(&selected);
         let mut toolset: Toolset = requests.clone().into();
         let resolve_options = ResolveOptions {
             offline: true,
@@ -267,7 +291,7 @@ impl InstallContext {
         request: &ToolRequest,
     ) -> Result<&InstallDependencyContext> {
         self.dependency_context
-            .get_or_try_init(|| InstallDependencyContext::resolve(&self.config, request))
+            .get_or_try_init(|| InstallDependencyContext::resolve(&self.config, &self.ts, request))
             .await
     }
 }

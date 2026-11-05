@@ -197,15 +197,20 @@ install otherwise.
 
 The `danger-swift` registry shorthand supplies the official installer options,
 so projects do not need to repeat `install_command`. On macOS, installation uses
-the Swift toolchain selected by `xcrun`, matching Dangerfile execution. Danger JS is also required.
-For a fresh install through the npm backend, declare Node and Danger JS separately:
+the Swift toolchain selected by `xcrun`, matching Dangerfile execution.
+The registry also supplies Danger JS and Node as runtime dependencies:
 
 ```toml
 [tools]
-node = "24"
-danger-js = "13.0.10"
 danger-swift = "3.22.1"
 ```
+
+The recipe defaults are Danger JS `13.0.10` and Node `24`. They are maintained
+in the registry, not calculated from the Danger Swift version. Changing the
+Danger Swift pin alone does not change these defaults. Node `24` uses normal
+mise version resolution; a lockfile records the concrete selected versions.
+Explicit `danger-js` or `node` entries override the defaults. Different installed
+versions can coexist; their presence alone does not override the recipe.
 
 ## Settings
 

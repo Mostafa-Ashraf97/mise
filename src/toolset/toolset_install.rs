@@ -342,7 +342,46 @@ impl Toolset {
         // tool selected by the caller. Track dependencies by their full request
         // key, rather than just their backend, so that private runtimes are not
         // returned to callers such as `mise use` and persisted as user tools.
-        let private_dependency_keys = self.add_private_install_dependencies(&mut versions)?;
+        // Inferred defaults are not explicit selections: a CLI request may replace
+        // its consumer's defaults while retaining actual configured overrides.
+        let configured = super::ToolRequestSetBuilder::new()
+            .without_runtime_dependencies()
+            .build(config)
+            .await?
+            .tools
+            .values()
+            .flatten()
+            .cloned()
+            .collect_vec();
+        let expanded = super::runtime_dependencies::expand(&versions, &configured)?;
+        if expanded
+            .iter()
+            .any(|request| request.options().opts.contains_key("runtime_dependencies"))
+        {
+            let mut selected = Toolset::new(self.source.clone().unwrap_or_default());
+            for request in &expanded {
+                selected.add_version(request.clone());
+            }
+            selected
+                .resolve_with_opts(config, &opts.resolve_options)
+                .await?;
+            // Keep explicit batch overrides while resolving transitive defaults,
+            // including `mise use` requests not yet present in the config.
+            self.versions.retain(|ba, _| {
+                !selected
+                    .versions
+                    .keys()
+                    .any(|active| crate::install_context::backend_args_match(ba, active))
+            });
+            self.versions.extend(selected.versions);
+        }
+        let mut private_dependency_keys = expanded
+            .iter()
+            .filter(|request| !versions.contains(request))
+            .map(graph_key)
+            .collect::<HashSet<_>>();
+        versions = expanded;
+        private_dependency_keys.extend(self.add_private_install_dependencies(&mut versions)?);
         ensure_compatible_install_requests(&versions)?;
         ensure_safe_install_options(&versions)?;
 

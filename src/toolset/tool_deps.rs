@@ -22,9 +22,9 @@ pub(crate) fn tool_key(tr: &ToolRequest) -> ToolKey {
 /// Creates a scope-aware key for dependency scheduling and deduplication.
 ///
 /// Two lockfile scopes can resolve the same selector to different concrete
-/// pins, so graph nodes must retain their source identity.
+/// pins, so graph nodes must retain their source and lockfile scope.
 pub(crate) fn graph_key(tr: &ToolRequest) -> ToolKey {
-    format!("{}#{}", tool_key(tr), tr.source())
+    format!("{}#{}#{:?}", tool_key(tr), tr.source(), tr.lockfile_scope())
 }
 
 fn install_destination_key(tr: &ToolRequest) -> String {
@@ -145,6 +145,33 @@ mod tests {
     #[test]
     fn test_empty_deps() {
         let _deps = ToolDeps::new(vec![]).unwrap();
+    }
+
+    #[test]
+    fn task_requests_with_different_lock_owners_are_both_scheduled() {
+        let requests = ["/tmp/first/mise.toml", "/tmp/second/mise.toml"]
+            .map(|path| {
+                let mut request = ToolRequest::new(
+                    Arc::new(BackendArg::from("tiny")),
+                    "1",
+                    ToolSource::Argument,
+                )
+                .unwrap();
+                request.set_lockfile_scope(crate::toolset::tool_request::LockfileScope::Source(
+                    ToolSource::MiseToml(path.into()),
+                ));
+                request
+            })
+            .to_vec();
+        let mut deps = ToolDeps::new(requests.clone()).unwrap();
+        let mut rx = deps.subscribe();
+        let mut emitted = vec![];
+        while let Ok(Some(request)) = rx.try_recv() {
+            deps.complete_success(&request);
+            emitted.push(request);
+        }
+        assert_eq!(emitted.len(), requests.len());
+        assert!(requests.iter().all(|request| emitted.contains(request)));
     }
 
     #[tokio::test]
